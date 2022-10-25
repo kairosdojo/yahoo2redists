@@ -136,14 +136,18 @@ fn main() {
 
     // client is a RedisResult enum
     let client = match Client::open(format!("redis://{redis_ip}/")) {
-        Ok(c) => {
-            println!("\nConnection to redis server at {redis_ip} successful.\n");
-            c
-        }
+        Ok(c) => c,
         Err(error) => panic!("{error}"),
     };
 
-    let mut conn = client.get_connection().unwrap();
+    let mut conn = match client.get_connection() {
+        Ok(conn) => {
+            println!("\nConnection to redis server at {redis_ip} successful.\n");
+            conn
+        }
+        Err(error) => panic!("I was not able to establish a connection with redis: {error}"),
+    };
+
     let tickers: Vec<String> = retrieve_tickers(&mut conn);
     get_historical(&mut conn, &tickers, &mut period);
 }
