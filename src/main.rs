@@ -5,14 +5,49 @@ use redis::{Client, Commands};
 use redis_ts::{TsCommands, TsDuplicatePolicy, TsOptions};
 use yahoo_finance_api as yahoo;
 
+fn main() {
+    let mut redis_ip = "192.168.1.113".to_string();
+    let mut period = "1w".to_string();
+
+    // parsing the external parameters
+    {
+        let mut ap = ArgumentParser::new();
+        ap.set_description("Retrieve historical candles data from Yahoo Finance.");
+        ap.refer(&mut redis_ip)
+            .add_option(&["-r", "--redis_ip"], Store, "Redis Server IP address");
+        ap.refer(&mut period).add_option(
+            &["-p", "--period"],
+            Store,
+            "Retrieval period (default: 1w; max: 99y)",
+        );
+        ap.parse_args_or_exit();
+    }
+
+    // client is a RedisResult enum
+    let client = match Client::open(format!("redis://{redis_ip}/")) {
+        Ok(c) => c,
+        Err(error) => panic!("{error}"),
+    };
+
+    let mut conn = match client.get_connection() {
+        Ok(conn) => {
+            println!("\nConnection to redis server at {redis_ip} successful.\n");
+            conn
+        }
+        Err(error) => panic!("I was not able to establish a connection with redis: {error}"),
+    };
+
+    let tickers: Vec<String> = retrieve_tickers(&mut conn);
+    get_historical(&mut conn, &tickers, &mut period);
+}
+
+/// Returns a sorted vector containing all the names of the tickers.
+/// Each ticker has a key, "active" (bool), indicating whether we want to
+/// monitor that ticker or we skip it.
+///
+/// # Arguments
+/// * `conn` - it handles the connection to Redis Timeseries
 fn retrieve_tickers(conn: &mut redis::Connection) -> Vec<String> {
-    // Returns a sorted vector containing all the names of the tickers.
-    // Each ticker has a key, "attivo" (bool), indicating whether we want to
-    // monitor that ticker or we skip it.
-    //
-    // # Arguments
-    // * `conn` - it handles the connection to Redis Timeseries
-    //
     // # TODO:
     // * a) errors management and tests
     // * b) eliminate hard-coded redis keys
@@ -21,7 +56,7 @@ fn retrieve_tickers(conn: &mut redis::Connection) -> Vec<String> {
     let answer: Vec<String> = conn.keys("MARKET:METADATA:STOCKS:*").unwrap();
 
     for x in answer.iter() {
-        let status: String = conn.hget(&x, "attivo").unwrap();
+        let status: String = conn.hget(&x, "active").unwrap();
 
         // if active add to the final vector
         if status == "1" {
@@ -35,16 +70,15 @@ fn retrieve_tickers(conn: &mut redis::Connection) -> Vec<String> {
     tickers_vector
 }
 
+/// Returns a sorted vector containing all the names of the tickers.
+/// Each ticker has a key, "active" (bool), indicating whether we want to
+/// monitor that ticker or we skip it.
+///
+/// # Arguments
+/// * `conn`    - it handles the connection to Redis Timeseries
+/// * `tickers` - sorted vector containing the names of the tickers
+/// * `period`  - indicates the amount of data we want to retrieve from yahoo finance
 fn get_historical(conn: &mut redis::Connection, tickers: &Vec<String>, period: &mut String) {
-    // Returns a sorted vector containing all the names of the tickers.
-    // Each ticker has a key, "attivo" (bool), indicating whether we want to
-    // monitor that ticker or we skip it.
-    //
-    // # Arguments
-    // * `conn`    - it handles the connection to Redis Timeseries
-    // * `tickers` - sorted vector containing the names of the tickers
-    // * `period`  - indicates the amount of data we want to retrieve from yahoo finance
-    //
     // # TODO:
     // * a) check whether symbol has been delisted before attempting download;
     // * b) add meta-info to redis
@@ -114,40 +148,4 @@ fn get_historical(conn: &mut redis::Connection, tickers: &Vec<String>, period: &
                 .unwrap();
         }
     }
-}
-
-fn main() {
-    let mut redis_ip = "192.168.1.113".to_string();
-    let mut period = "1w".to_string();
-
-    // parsing the external parameters
-    {
-        let mut ap = ArgumentParser::new();
-        ap.set_description("Retrieve historical candles data from Yahoo Finance.");
-        ap.refer(&mut redis_ip)
-            .add_option(&["-r", "--redis_ip"], Store, "Redis Server IP address");
-        ap.refer(&mut period).add_option(
-            &["-p", "--period"],
-            Store,
-            "Retrieval period (default: 1w; max: 99y)",
-        );
-        ap.parse_args_or_exit();
-    }
-
-    // client is a RedisResult enum
-    let client = match Client::open(format!("redis://{redis_ip}/")) {
-        Ok(c) => c,
-        Err(error) => panic!("{error}"),
-    };
-
-    let mut conn = match client.get_connection() {
-        Ok(conn) => {
-            println!("\nConnection to redis server at {redis_ip} successful.\n");
-            conn
-        }
-        Err(error) => panic!("I was not able to establish a connection with redis: {error}"),
-    };
-
-    let tickers: Vec<String> = retrieve_tickers(&mut conn);
-    get_historical(&mut conn, &tickers, &mut period);
 }
